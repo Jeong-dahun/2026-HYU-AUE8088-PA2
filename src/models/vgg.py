@@ -1,10 +1,7 @@
-"""VGG-16 (Simonyan & Zisserman, ICLR 2015) — student implementation.
+"""VGG-16 (Simonyan & Zisserman, ICLR 2015) student implementation.
 
-You may NOT use ``torchvision.models.vgg16`` or ``timm.create_model``.
-You MAY read those reference implementations and re-type the architecture.
-
-Skeleton scaffolding (forward pass, head wiring) is provided. Fill in the
-``# TODO`` blocks.
+PA2 instruction: implement every layer directly from the paper, without using
+``torchvision.models.vgg16`` or ``timm.create_model``.
 """
 from __future__ import annotations
 
@@ -14,7 +11,8 @@ from torch import nn
 from src.models.heads import MultiTaskHead
 
 
-# Standard VGG-16 layer configuration (numbers = output channels, "M" = maxpool).
+# 논문 Table 1의 configuration D(VGG-16)를 문서화한 참고용 목록이다.
+# 실제 모델은 과제 요구사항에 맞춰 아래 nn.Sequential에 모든 레이어를 직접 적는다.
 VGG16_CFG = [
     64, 64, "M",
     128, 128, "M",
@@ -24,40 +22,80 @@ VGG16_CFG = [
 ]
 
 
-def make_vgg_layers(cfg: list, batch_norm: bool = True) -> nn.Sequential:
-    """Build the convolutional feature extractor from ``cfg``.
+def make_vgg_layers(cfg: list | None = None, batch_norm: bool = False) -> nn.Sequential:
+    """Build the VGG-16 feature extractor by hard-coding Table 1-D.
 
-    TODO: For each entry in cfg:
-      - "M": append nn.MaxPool2d(kernel_size=2, stride=2)
-      - int v: append Conv2d(in -> v, k=3, p=1) → (BN) → ReLU(inplace=True)
-    Return as nn.Sequential.
+    ``cfg`` and ``batch_norm`` are kept only for compatibility with the starter
+    skeleton. The original VGG paper uses 3x3 conv layers, ReLU, and 2x2
+    max-pooling; it does not use BatchNorm in configuration D.
     """
-    layers: list[nn.Module] = []
-    in_channels = 3
+    if cfg is not None and cfg != VGG16_CFG:
+        raise ValueError("This PA2 implementation supports only VGG-16 configuration D.")
+    _ = batch_norm  # 논문 기반 구현에서는 BatchNorm을 추가하지 않는다.
 
-    # TODO: implement the loop described above.
-    raise NotImplementedError("Level 1: implement make_vgg_layers")
+    return nn.Sequential(
+        # 1번 블록: 224x224 -> 112x112, 채널 3 -> 64
+        nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1),
+        nn.ReLU(inplace=True),
+        nn.Conv2d(64, 64, kernel_size=3, stride=1, padding=1),
+        nn.ReLU(inplace=True),
+        nn.MaxPool2d(kernel_size=2, stride=2),
 
-    return nn.Sequential(*layers)
+        # 2번 블록: 112x112 -> 56x56, 채널 64 -> 128
+        nn.Conv2d(64, 128, kernel_size=3, stride=1, padding=1),
+        nn.ReLU(inplace=True),
+        nn.Conv2d(128, 128, kernel_size=3, stride=1, padding=1),
+        nn.ReLU(inplace=True),
+        nn.MaxPool2d(kernel_size=2, stride=2),
+
+        # 3번 블록: 56x56 -> 28x28, 채널 128 -> 256
+        nn.Conv2d(128, 256, kernel_size=3, stride=1, padding=1),
+        nn.ReLU(inplace=True),
+        nn.Conv2d(256, 256, kernel_size=3, stride=1, padding=1),
+        nn.ReLU(inplace=True),
+        nn.Conv2d(256, 256, kernel_size=3, stride=1, padding=1),
+        nn.ReLU(inplace=True),
+        nn.MaxPool2d(kernel_size=2, stride=2),
+
+        # 4번 블록: 28x28 -> 14x14, 채널 256 -> 512
+        nn.Conv2d(256, 512, kernel_size=3, stride=1, padding=1),
+        nn.ReLU(inplace=True),
+        nn.Conv2d(512, 512, kernel_size=3, stride=1, padding=1),
+        nn.ReLU(inplace=True),
+        nn.Conv2d(512, 512, kernel_size=3, stride=1, padding=1),
+        nn.ReLU(inplace=True),
+        nn.MaxPool2d(kernel_size=2, stride=2),
+
+        # 5번 블록: 14x14 -> 7x7, 채널 512 -> 512
+        nn.Conv2d(512, 512, kernel_size=3, stride=1, padding=1),
+        nn.ReLU(inplace=True),
+        nn.Conv2d(512, 512, kernel_size=3, stride=1, padding=1),
+        nn.ReLU(inplace=True),
+        nn.Conv2d(512, 512, kernel_size=3, stride=1, padding=1),
+        nn.ReLU(inplace=True),
+        nn.MaxPool2d(kernel_size=2, stride=2),
+    )
 
 
 class VGG16(nn.Module):
-    """VGG-16-BN with a multi-task classification head."""
+    """VGG-16 configuration D with a multi-task classification head."""
 
     def __init__(self, dropout: float = 0.5) -> None:
         super().__init__()
-        self.features = make_vgg_layers(VGG16_CFG, batch_norm=True)
+        self.features = make_vgg_layers(VGG16_CFG)
 
-        # After 5 maxpool stages, 224x224 -> 7x7. Channels = 512.
+        # 5번의 max-pooling 뒤 224x224 입력은 7x7 feature map이 된다.
         self.avgpool = nn.AdaptiveAvgPool2d((7, 7))
 
-        # TODO: classifier MLP. The original VGG uses:
-        #   Linear(512*7*7, 4096) -> ReLU -> Dropout
-        #   Linear(4096, 4096)    -> ReLU -> Dropout
-        # Here we end at a 4096-dim feature vector and hand it to the
-        # multi-task head.
+        # 논문은 FC-4096 -> FC-4096 -> FC-1000 구조를 사용한다.
+        # 이 과제에서는 마지막 FC-1000 대신 weather/scene/timeofday head를 붙인다.
         self.classifier = nn.Sequential(
-            # TODO: fill in
+            nn.Linear(512 * 7 * 7, 4096),
+            nn.ReLU(inplace=True),
+            nn.Dropout(p=dropout),
+            nn.Linear(4096, 4096),
+            nn.ReLU(inplace=True),
+            nn.Dropout(p=dropout),
         )
 
         self.head = MultiTaskHead(in_features=4096, dropout=dropout)
